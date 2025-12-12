@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cpdl"
+version = "0.0.0"  # Placeholder, will be overridden by setuptools-scm
+authors = [
+    {name = "Benjamin Hudson", email = "ben.hudson@mila.quebec"}
+]
+license = {file = "LICENSE"}
+dependencies = [
+    "gurobipy",
+    "lightning",
+    "matplotlib",
+    "seaborn",
+    "networkx",
+    "numpy",
+    "pyepo",
+    "route-choice@git+https://github.com/ben-hudson/pytorch-route-choice",
+    "scikit-learn",
+    "torch_geometric",
+    "torch",
+    "tqdm",
+    "wandb"
+]
+
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
