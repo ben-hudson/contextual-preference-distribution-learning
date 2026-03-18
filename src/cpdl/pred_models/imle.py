@@ -21,6 +21,12 @@ class SumOfGammas(torch.distributions.Distribution):
         samples = torch.as_tensor(samples_np).float().to(self.loc.device)
         return self.loc + self.scale * samples
 
+    # no time to derive a closed form mean, so we'll just do an empirical mean
+    @property
+    def mean(self):
+        samples = self.sample((10000,))
+        return samples.mean(dim=0)
+
 
 class AIMLE(BaseLightningModel):
     def __init__(
@@ -43,11 +49,13 @@ class AIMLE(BaseLightningModel):
         #     fwd_opt, n_samples=n_samples, sigma=noise_scale, lambd=lambd, two_sides=two_sides
         # )
         self.smooth_fwd_opt = adaptiveImplicitMLE(fwd_opt, n_samples=n_samples, sigma=noise_scale, two_sides=both_sides)
+        self.smooth_fwd_opt_val = adaptiveImplicitMLE(fwd_opt, n_samples=100, sigma=noise_scale, two_sides=both_sides)
+        self.smooth_fwd_opt_test = adaptiveImplicitMLE(fwd_opt, n_samples=1000, sigma=noise_scale, two_sides=both_sides)
 
         if loss == "mse":
             self.loss_fn = torch.nn.MSELoss()
-        # elif loss == "bce":
-        #     self.loss_fn = torch.nn.BCELoss()
+        elif loss == "bce":
+            self.loss_fn = torch.nn.BCELoss()
         else:
             raise ValueError(f"Expected mse or bce, but got loss={loss}.")
 
@@ -72,14 +80,17 @@ class AIMLE(BaseLightningModel):
         costs_pred = self.forward(feats)
 
         choice_prob = choices.mean(dim=1)
-        choice_prob_pred = self.smooth_fwd_opt(costs_pred)
+        if log_prefix == "test/":
+            choice_prob_pred = self.smooth_fwd_opt_test(costs_pred)
+        else:
+            choice_prob_pred = self.smooth_fwd_opt_val(costs_pred)
         loss = self.loss_fn(choice_prob_pred, choice_prob)
 
         cost_means_flat = cost_locs.cpu().flatten()
         cost_means_pred_flat = costs_pred.cpu().flatten()
         r2_mean = get_r2(cost_means_flat, cost_means_pred_flat)
 
-        metric_dict = {"loss": loss, "r2_mean": r2_mean}
+        metric_dict = {"loss": loss, "r2_loc": r2_mean}
         self.log_dict({log_prefix + k: v for k, v in metric_dict.items()}, prog_bar=True)
         return loss
 

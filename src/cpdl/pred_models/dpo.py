@@ -24,12 +24,12 @@ class DPO(BaseLightningModel):
         self.encoder = encoder
 
         self.smooth_fwd_opt = perturbedOpt(fwd_opt, n_samples=n_samples, sigma=noise_scale, processes=1)
+        self.smooth_fwd_opt_val = perturbedOpt(fwd_opt, n_samples=100, sigma=noise_scale, processes=1)
+        self.smooth_fwd_opt_test = perturbedOpt(fwd_opt, n_samples=1000, sigma=noise_scale, processes=1)
         self.noise_scale = noise_scale
 
         if loss == "mse":
             self.loss_fn = torch.nn.MSELoss()
-        # elif loss == "bce":
-        #     self.loss_fn = torch.nn.BCELoss()
         else:
             raise ValueError(f"Expected mse or bce, but got loss={loss}.")
 
@@ -50,18 +50,21 @@ class DPO(BaseLightningModel):
         return loss
 
     def validation_step(self, batch, batch_idx, log_prefix: str = "val/"):
-        feats, costs, cost_locs, _, choices = batch
+        feats, _, cost_locs, _, choices = batch
         costs_pred = self.forward(feats)
 
         choice_prob = choices.mean(dim=1)
-        choice_prob_pred = self.smooth_fwd_opt(costs_pred)
+        if log_prefix == "test/":
+            choice_prob_pred = self.smooth_fwd_opt_test(costs_pred)
+        else:
+            choice_prob_pred = self.smooth_fwd_opt_val(costs_pred)
         loss = self.loss_fn(choice_prob_pred, choice_prob)
 
-        cost_locs_flat = cost_locs.cpu().flatten()
-        cost_locs_pred_flat = costs_pred.cpu().flatten()
-        r2_loc = get_r2(cost_locs_flat, cost_locs_pred_flat)
+        cost_means_flat = cost_locs.cpu().flatten()
+        cost_means_pred_flat = costs_pred.cpu().flatten()
+        r2_mean = get_r2(cost_means_flat, cost_means_pred_flat)
 
-        metric_dict = {"loss": loss, "r2_mean": r2_loc}
+        metric_dict = {"loss": loss, "r2_loc": r2_mean}
         self.log_dict({log_prefix + k: v for k, v in metric_dict.items()}, prog_bar=True)
         return loss
 

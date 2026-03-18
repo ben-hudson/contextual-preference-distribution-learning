@@ -24,8 +24,6 @@ class REINFORCE(BaseLightningModel):
 
         if loss == "mse":
             self.loss_fn = torch.nn.MSELoss(reduction="none")
-        # elif loss == "bce":
-        #     self.loss_fn = torch.nn.BCELoss(reduction="none")
         else:
             raise ValueError(f"Expected mse or bce, but got loss={loss}.")
 
@@ -63,8 +61,8 @@ class REINFORCE(BaseLightningModel):
     def predict_cost_dist(self, feats):
         return self.forward(feats)
 
-    def get_prob(self, cost_dist: torch.distributions.Distribution):
-        samples = cost_dist.sample((self.n_samples,))
+    def get_prob(self, cost_dist: torch.distributions.Distribution, n_samples: int):
+        samples = cost_dist.sample((n_samples,))
         sampled_choices, _ = self.fwd_opt.solve_batch(samples)
         return sampled_choices.mean(dim=0)
 
@@ -73,7 +71,8 @@ class REINFORCE(BaseLightningModel):
         choice_prob = choices.mean(dim=1)
 
         cost_dist_pred = self.forward(feats)
-        choice_prob_pred = self.get_prob(cost_dist_pred)
+        n_samples = 1000 if log_prefix == "test/" else 100
+        choice_prob_pred = self.get_prob(cost_dist_pred, n_samples=n_samples)
 
         loss = self.loss_fn(choice_prob_pred, choice_prob).mean()
 
@@ -86,6 +85,6 @@ class REINFORCE(BaseLightningModel):
         r2_mean = get_r2(cost_means_flat, cost_means_pred_flat)
         r2_scale = get_r2(cost_scales_flat, cost_scales_pred_flat)
 
-        metric_dict = {"loss": loss, "r2_mean": r2_mean, "r2_scale": r2_scale}
+        metric_dict = {"loss": loss, "r2_loc": r2_mean, "r2_scale": r2_scale}
         self.log_dict({log_prefix + k: v for k, v in metric_dict.items()}, prog_bar=True)
         return loss

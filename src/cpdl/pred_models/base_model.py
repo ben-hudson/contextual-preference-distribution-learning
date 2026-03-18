@@ -1,7 +1,7 @@
 import lightning as L
 import torch
 
-from ..opt_models import BaseGurobiModel
+from ..opt_models import ScenarioBasedCVaRMatching
 
 
 # this holds some standard stuff that...
@@ -10,7 +10,7 @@ from ..opt_models import BaseGurobiModel
 class BaseLightningModel(L.LightningModule):
     def __init__(
         self,
-        decision_policy: BaseGurobiModel,
+        decision_policy: ScenarioBasedCVaRMatching,
         lr_start: float = 5e-3,
         lr_stop: float = 1e-4,
         lr_rel_tol: float = 1e-3,
@@ -29,29 +29,30 @@ class BaseLightningModel(L.LightningModule):
         raise NotImplementedError("test step require a function that predicts cost distributions from features")
 
     def validation_step(self, batch, batch_idx, log_prefix: str = "val/"):
-        pass
+        self.log(log_prefix + "loss", 0)
 
     def test_step(self, batch, batch_idx):
         self.validation_step(batch, batch_idx, log_prefix="test/")
 
-        feats, costs, _, _, _ = batch
+        feats, costs, cost_locs, cost_scales, _ = batch
         # pick a random feature to be the org costs (e.g. one of the features is travel time)
         org_costs = feats[..., 0]
 
         cost_dist_pred = self.predict_cost_dist(feats)
-        sols, objs_pred = self.policy.solve_batch(cost_dist_pred, org_costs)
+        if isinstance(self.policy, ScenarioBasedCVaRMatching):
+            sols, objs_pred = self.policy.get_scenarios_and_solve_batch(cost_dist_pred, org_costs)
+        else:
+            sols, objs_pred = self.policy.get_cost_matrix_and_solve_batch(cost_dist_pred, org_costs)
 
         # realized cost matrices
         cost_matrix = self.policy.get_cost_matrix(costs, org_costs.unsqueeze(1).expand_as(costs))
         # average realized objective value over samples
-        objs_real = (cost_matrix * sols.unsqueeze(1)).flatten(start_dim=1).sum(dim=1, keepdim=True) / costs.size(1)
+        objs_real = (cost_matrix * sols.unsqueeze(1)).flatten(start_dim=-2).sum(dim=-1)
 
         self.log_dict(
             {
-                "test/obj_err": (objs_pred - objs_real).mean(),
-                "test/obj_err_rel": ((objs_pred - objs_real) / objs_real).mean(),
-                "test/obj_mse": torch.nn.functional.mse_loss(objs_pred, objs_real, reduction="mean"),
-                "test/obj_abs_err": torch.nn.functional.l1_loss(objs_pred, objs_real, reduction="mean"),
+                "test/pds": (objs_real.mean(dim=-1, keepdim=True) - objs_pred).pow(2).mean(),
+                "test/pdd": (objs_real.mean(dim=-1, keepdim=True) - objs_pred).clamp(0).pow(2).mean(),
             }
         )
 

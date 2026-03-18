@@ -65,7 +65,7 @@ class RiderDriverMatching(OptimalAssignment):
                 cost_matrix[..., i, j] = (org_costs * sols).sum(dim=-1)
         return cost_matrix
 
-    def solve_batch(self, driver_costs: torch.Tensor, org_costs: torch.Tensor = None, **kwargs):
+    def get_cost_matrix_and_solve_batch(self, driver_costs: torch.Tensor, org_costs: torch.Tensor = None, **kwargs):
         if isinstance(driver_costs, torch.distributions.Distribution):
             driver_costs = driver_costs.mean
         if org_costs is None:
@@ -73,6 +73,17 @@ class RiderDriverMatching(OptimalAssignment):
 
         cost_matrix = self.get_cost_matrix(driver_costs, org_costs)
         return super().solve_batch(cost_matrix, **kwargs)
+
+
+class RandomMatching(RiderDriverMatching):
+    def solve(self, cost):
+        sol = np.zeros_like(cost)
+        drivers = np.arange(sol.shape[0])
+        riders = np.random.permutation(sol.shape[1])
+        sol[drivers, riders] = 1.0
+
+        obj = (cost * sol).sum()
+        return sol, obj
 
 
 # Uryasev-Rockafellar method from https://arxiv.org/pdf/1511.00140 section 3.2
@@ -111,7 +122,9 @@ class ScenarioBasedCVaRMatching(RiderDriverMatching):
         obj = (cost * sol).sum() / self.n_scenarios
         return sol, obj
 
-    def solve_batch(self, driver_costs: torch.distributions.Distribution, org_costs: torch.Tensor, **kwargs):
+    def get_scenarios_and_solve_batch(
+        self, driver_costs: torch.distributions.Distribution, org_costs: torch.Tensor, **kwargs
+    ):
         driver_cost_scenarios = driver_costs.sample((self.n_scenarios,))
         org_cost_scenarios = org_costs.expand_as(driver_cost_scenarios)
 
@@ -119,4 +132,4 @@ class ScenarioBasedCVaRMatching(RiderDriverMatching):
         driver_cost_scenarios = driver_cost_scenarios.swapaxes(0, 1)
         org_cost_scenarios = org_cost_scenarios.swapaxes(0, 1)
 
-        return super().solve_batch(driver_cost_scenarios, org_cost_scenarios, **kwargs)
+        return self.get_cost_matrix_and_solve_batch(driver_cost_scenarios, org_cost_scenarios, **kwargs)

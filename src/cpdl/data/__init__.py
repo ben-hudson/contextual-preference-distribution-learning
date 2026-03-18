@@ -1,6 +1,7 @@
 import torch
 
 from ..opt_models import BaseGurobiModel
+
 from .grid import *
 
 
@@ -10,9 +11,13 @@ def generate_instances(
     n_samples_per_instance: int,
     n_feats: int,
     noise_scale: float = 1.0,
+    util_mean_coeffs=None,
+    util_scale_coeffs=None,
 ):
-    util_mean_coeffs = torch.rand(n_feats, 1)
-    util_scale_coeffs = torch.rand(n_feats, 1)
+    if util_mean_coeffs is None:
+        util_mean_coeffs = torch.rand(n_feats, 1)
+    if util_scale_coeffs is None:
+        util_scale_coeffs = torch.rand(n_feats, 1)
 
     n_edges = len(model.edge_list)
 
@@ -26,4 +31,4 @@ def generate_instances(
 
     sols, _ = model.solve_batch(utils)
 
-    return feats, utils, util_locs, util_scales, sols
+    return feats, utils, util_locs, util_scales, sols, util_mean_coeffs, util_scale_coeffs
