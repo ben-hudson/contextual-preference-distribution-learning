@@ -38,11 +38,20 @@ class BaseLightningModel(L.LightningModule):
         # pick a random feature to be the org costs (e.g. one of the features is travel time)
         org_costs = feats[..., 0]
 
-        # cost_dist_pred = self.predict_cost_dist(feats)
-        cost_matrix = self.get_cost_matrix(
-            feats, self.policy.drivers, self.policy.riders, org_costs, self.policy.n_scenarios
-        )
-        sols, objs_pred = self.policy.solve_batch(cost_matrix)
+        # MEGA ANTI-PATTERN sorry
+        from .irl import IRL
+
+        if isinstance(self, IRL):
+            cost_matrix = self.get_cost_matrix(
+                feats, self.policy.drivers, self.policy.riders, org_costs, self.policy.n_scenarios
+            )
+            sols, objs_pred = self.policy.solve_batch(cost_matrix)
+        else:
+            cost_dist_pred = self.predict_cost_dist(feats)
+            if isinstance(self.policy, ScenarioBasedCVaRMatching):
+                sols, objs_pred = self.policy.get_scenarios_and_solve_batch(cost_dist_pred, org_costs)
+            else:
+                sols, objs_pred = self.policy.get_cost_matrix_and_solve_batch(cost_dist_pred, org_costs)
 
         # realized cost matrices
         cost_matrix = self.policy.get_cost_matrix(costs, org_costs.unsqueeze(1).expand_as(costs))
