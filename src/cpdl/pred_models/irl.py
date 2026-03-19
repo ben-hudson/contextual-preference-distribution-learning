@@ -32,9 +32,10 @@ class IRL(BaseLightningModel):
         self.node_list = list(graph.nodes)
         self.graph = torch_geometric.utils.from_networkx(graph)
 
-        self.choice_model = MarkovRouteChoice(
-            encoder, node_dim=-1, f_tol=f_tol, f_solver=f_solver, f_max_iter=f_max_iter
-        )
+        self.choice_model = MarkovRouteChoice(encoder, node_dim=-1)
+        self.f_tol = f_tol
+        self.f_solver = f_solver
+        self.f_max_iter = f_max_iter
 
     def to_torch_geometric_batch(self, feats, costs, cost_locs, cost_scales, sols):
         batch_size = feats.size(0)
@@ -58,29 +59,45 @@ class IRL(BaseLightningModel):
         return Batch.from_data_list(data_list)
 
     def training_step(self, batch):
-        feats, costs, cost_locs, cost_scales, sols = batch
-        choice_prob = sols.mean(dim=1)
+        batch = self.to_torch_geometric_batch(*batch)
+        rewards, values, action_prob = self.choice_model(
+            batch.edge_index,
+            batch.feats,
+            batch.is_dest,
+            f_solver=self.f_solver,
+            f_tol=self.f_tol,
+            f_max_iter=self.f_max_iter,
+        )
+        node_flows, edge_flows = self.choice_model.get_flows(
+            batch.edge_index,
+            action_prob,
+            batch.is_orig,
+            f_solver=self.f_solver,
+            f_tol=self.f_tol,
+            f_max_iter=self.f_max_iter,
+        )
 
-        is_dest = self.graph.is_dest.unsqueeze(0).expand(feats.size(0), -1)
-        is_orig = self.graph.is_orig.unsqueeze(0).expand(feats.size(0), -1)
-
-        rewards, values, action_prob = self.choice_model(self.graph.edge_index, feats, is_dest)
-        node_flows, edge_flows = self.choice_model.get_flows(self.graph.edge_index, action_prob, is_orig)
-
-        loss = torch.nn.functional.mse_loss(edge_flows, choice_prob)
+        loss = torch.nn.functional.mse_loss(edge_flows, batch.sols.mean(dim=1))
         self.log("train/loss", loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx, log_prefix: str = "val/"):
-        feats, costs, cost_locs, cost_scales, sols = batch
-        choice_prob = sols.mean(dim=1)
-
-        # batch = self.to_torch_geometric_batch(*batch)
+        batch = self.to_torch_geometric_batch(*batch)
         rewards, values, action_prob = self.choice_model(
-            self.graph.edge_index, feats, self.graph.is_dest.expand(feats.size(0), -1)
+            batch.edge_index,
+            batch.feats,
+            batch.is_dest,
+            f_solver=self.f_solver,
+            f_tol=self.f_tol,
+            f_max_iter=self.f_max_iter,
         )
         node_flows, edge_flows = self.choice_model.get_flows(
-            self.graph.edge_index, action_prob, self.graph.is_orig.unsqueeze(0)
+            batch.edge_index,
+            action_prob,
+            batch.is_orig,
+            f_solver=self.f_solver,
+            f_tol=self.f_tol,
+            f_max_iter=self.f_max_iter,
         )
 
         loss = torch.nn.functional.mse_loss(edge_flows, batch.sols.mean(dim=1))
@@ -88,32 +105,6 @@ class IRL(BaseLightningModel):
         metric_dict = {"loss": loss, "r2_loc": r2_mean}
         self.log_dict({log_prefix + k: v for k, v in metric_dict.items()}, prog_bar=True)
         return loss
-
-    # we need to override the test step because we sample the cost matrix directly for IRL
-    def test_step(self, batch, batch_idx):
-        self.validation_step(batch, batch_idx, log_prefix="test/")
-
-        feats, costs, _, _, _ = batch
-        org_costs = feats[..., 0]
-
-        cost_matrix = self.get_cost_matrix(
-            feats, self.policy.drivers, self.policy.riders, org_costs, self.policy.n_scenarios
-        )
-        sols, objs_pred = self.policy.solve_batch(cost_matrix)
-
-        # realized cost matrices
-        cost_matrix = self.policy.get_cost_matrix(costs, org_costs.unsqueeze(1).expand_as(costs))
-        # average realized objective value over samples
-        objs_real = (cost_matrix * sols.unsqueeze(1)).flatten(start_dim=1).sum(dim=1, keepdim=True) / costs.size(1)
-
-        self.log_dict(
-            {
-                "test/obj_err": (objs_pred - objs_real).mean(),
-                "test/obj_err_rel": ((objs_pred - objs_real) / objs_real).mean(),
-                "test/obj_mse": torch.nn.functional.mse_loss(objs_pred, objs_real, reduction="mean"),
-                "test/obj_abs_err": torch.nn.functional.l1_loss(objs_pred, objs_real, reduction="mean"),
-            }
-        )
 
     def sample_path(self, edge_index, action_probs, orig_idx, dest_idx):
         sol = torch.zeros(self.graph.num_edges)
@@ -161,7 +152,8 @@ class IRL(BaseLightningModel):
                 f_tol=self.f_tol,
                 f_max_iter=self.f_max_iter,
             )
-            edge_batch = batch.batch[batch.edge_index[0]]
+            node_batch = batch.batch.to(feats.device)
+            edge_batch = node_batch[batch.edge_index[0]]
             action_prob_dense, _ = torch_geometric.utils.to_dense_batch(action_prob, edge_batch)
             action_prob_dense = action_prob_dense.cpu()
 

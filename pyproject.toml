@@ -17,7 +17,7 @@ dependencies = [
     "networkx",
     "numpy",
     "pyepo",
-    "route-choice@git+https://github.com/ben-hudson/pytorch-route-choice",
+    "route-choice@git+https://github.com/ben-hudson/pytorch-route-choice@cda0a38",
     "scikit-learn",
     "torch_geometric",
     "torch",
